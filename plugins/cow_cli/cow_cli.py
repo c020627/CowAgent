@@ -71,6 +71,36 @@ def _app_name() -> str:
     return (os.environ.get("COW_APP_NAME") or "").strip() or "CowAgent"
 
 
+# Block size used to find the last lines of a file from its end.
+_TAIL_CHUNK_BYTES = 8192
+
+
+def _tail_lines(path, limit):
+    """Return the last *limit* lines of *path* without reading the whole file.
+
+    run.log is appended to for as long as CowAgent runs and is never rotated,
+    and this command runs inside the bot process: reading it with
+    ``readlines()`` just to keep the last few lines loads every line ever
+    written, which on a long-lived instance is enough to get the process
+    OOM-killed. Read backwards in blocks and stop once there are enough lines.
+    """
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        remaining = f.tell()
+        blocks = []
+        newlines = 0
+        while remaining > 0 and newlines <= limit:
+            read_size = min(_TAIL_CHUNK_BYTES, remaining)
+            remaining -= read_size
+            f.seek(remaining)
+            block = f.read(read_size)
+            newlines += block.count(b"\n")
+            blocks.append(block)
+        data = b"".join(reversed(blocks))
+    lines = data.splitlines(keepends=True)
+    return [line.decode("utf-8", errors="replace") for line in lines[-limit:]]
+
+
 @plugins.register(
     name="cow_cli",
     desc="Handle cow/slash commands in chat messages",
@@ -608,9 +638,7 @@ class CowCliPlugin(Plugin):
             return _t("未找到日志文件", "No log file found")
 
         try:
-            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-                all_lines = f.readlines()
-            tail = all_lines[-num_lines:]
+            tail = _tail_lines(log_file, num_lines)
             content = "".join(tail).strip()
             if not content:
                 return _t("日志为空", "Log is empty")
