@@ -10,6 +10,7 @@ Description:
 
 import http.client
 import json
+import os
 import time
 import requests
 import datetime
@@ -20,6 +21,7 @@ import urllib.parse
 import uuid
 
 from common.log import logger
+from common.media_download import MAX_FILE_BYTES
 from common.tmp_dir import TmpDir
 
 
@@ -47,18 +49,38 @@ def text_to_speech_aliyun(url, text, appkey, token):
         "format": "wav"
     }
 
-    response = requests.post(url, headers=headers, data=json.dumps(data), timeout=(5, 60))
+    response = requests.post(url, headers=headers, data=json.dumps(data), timeout=(5, 60), stream=True)
 
-    if response.status_code == 200 and response.headers['Content-Type'] == 'audio/mpeg':
-        output_file = TmpDir().path() + "reply-" + str(int(time.time())) + "-" + str(hash(text) & 0x7FFFFFFF) + ".wav"
+    try:
+        if response.status_code == 200 and response.headers['Content-Type'] == 'audio/mpeg':
+            output_file = TmpDir().path() + "reply-" + str(int(time.time())) + "-" + str(hash(text) & 0x7FFFFFFF) + ".wav"
 
-        with open(output_file, 'wb') as file:
-            file.write(response.content)
-        logger.debug(f"音频文件保存成功，文件名：{output_file}")
-    else:
-        logger.debug("响应状态码: {}".format(response.status_code))
-        logger.debug("响应内容: {}".format(response.text))
-        output_file = None
+            # The endpoint comes from config, so the body is streamed and
+            # counted: an endless or multi-gigabyte response used to be buffered
+            # whole by `response.content` and written out before anything could
+            # object.
+            size = 0
+            with open(output_file, 'wb') as file:
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    if size > MAX_FILE_BYTES:
+                        file.close()
+                        try:
+                            os.remove(output_file)
+                        except OSError:
+                            pass
+                        logger.debug(f"音频文件超出大小限制: over {MAX_FILE_BYTES} bytes")
+                        return None
+                    file.write(chunk)
+            logger.debug(f"音频文件保存成功，文件名：{output_file}")
+        else:
+            logger.debug("响应状态码: {}".format(response.status_code))
+            logger.debug("响应内容: {}".format(response.text))
+            output_file = None
+    finally:
+        response.close()
 
     return output_file
 
