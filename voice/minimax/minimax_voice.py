@@ -7,6 +7,7 @@ import requests
 
 from bridge.reply import Reply, ReplyType
 from common.log import logger
+from common.media_download import MAX_FILE_BYTES
 from common.tmp_dir import TmpDir
 from config import conf
 from voice.voice import Voice
@@ -58,6 +59,7 @@ class MinimaxVoice(Voice):
 
             # MiniMax returns HTTP 200 even on errors; capture base_resp for diagnostics.
             audio_chunks = []
+            audio_size = 0
             last_base_resp = None
             event_count = 0
             for raw in response.iter_lines():
@@ -80,9 +82,22 @@ class MinimaxVoice(Voice):
                 audio_hex = (event_data.get("data") or {}).get("audio")
                 if audio_hex:
                     try:
-                        audio_chunks.append(bytes.fromhex(audio_hex))
+                        chunk = bytes.fromhex(audio_hex)
                     except Exception as e:
                         logger.warning(f"[MINIMAX] skip bad audio hex chunk: {e}")
+                        continue
+                    # `minimax_api_base` is operator config and every frame is
+                    # hex-encoded, so the decoded audio is what has to be
+                    # counted: an endpoint that keeps streaming frames used to
+                    # grow this buffer without limit.
+                    audio_size += len(chunk)
+                    if audio_size > MAX_FILE_BYTES:
+                        logger.error(
+                            f"[MINIMAX] textToVoice audio too large: "
+                            f"over {MAX_FILE_BYTES} bytes, model={model}, voice_id={voice_id}"
+                        )
+                        return Reply(ReplyType.ERROR, "语音合成失败，音频超出大小限制")
+                    audio_chunks.append(chunk)
 
             if not audio_chunks:
                 ct = response.headers.get("Content-Type", "")
