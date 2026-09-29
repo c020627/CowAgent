@@ -8,8 +8,9 @@ from config import conf
 from voice.voice import Voice
 import requests
 from common import const
+from common.media_download import MAX_FILE_BYTES
 from common.tmp_dir import TmpDir
-import datetime, random
+import datetime, os, random
 
 # Connect 5s, read 60s. Bounded like every other HTTP voice backend
 # (voice/zhipuai, voice/mimo, voice/linkai): a stalled transcription or
@@ -85,11 +86,33 @@ class OpenaiVoice(Voice):
                 'input': text,
                 'voice': conf().get("tts_voice_id") or "alloy"
             }
-            response = requests.post(url, headers=headers, json=data, timeout=REQUEST_TIMEOUT)
+            response = requests.post(url, headers=headers, json=data, timeout=REQUEST_TIMEOUT, stream=True)
             file_name = TmpDir().path() + datetime.datetime.now().strftime('%Y%m%d%H%M%S') + str(random.randint(0, 1000)) + ".mp3"
             logger.debug(f"[OPENAI] text_to_Voice file_name={file_name}, input={text}")
-            with open(file_name, 'wb') as f:
-                f.write(response.content)
+            # `api_base` is operator-supplied, so the body is streamed and counted:
+            # an endpoint that answers with an endless or multi-gigabyte stream
+            # used to be buffered whole and written to the tmp dir before anyone
+            # could object.
+            size = 0
+            try:
+                with open(file_name, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        if not chunk:
+                            continue
+                        size += len(chunk)
+                        if size > MAX_FILE_BYTES:
+                            f.close()
+                            try:
+                                os.remove(file_name)
+                            except OSError:
+                                pass
+                            logger.error(
+                                f"[OPENAI] textToVoice audio too large: over {MAX_FILE_BYTES} bytes"
+                            )
+                            return Reply(ReplyType.ERROR, "遇到了一点小问题，请稍后再问我吧")
+                        f.write(chunk)
+            finally:
+                response.close()
             logger.info("[OPENAI] text_to_Voice success")
             reply = Reply(ReplyType.VOICE, file_name)
         except Exception as e:

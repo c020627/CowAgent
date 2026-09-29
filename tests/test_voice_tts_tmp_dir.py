@@ -49,7 +49,8 @@ def test_linkai_tts_lands_in_the_managed_tmp_dir():
 
 
 def test_openai_tts_lands_in_the_managed_tmp_dir():
-    response = Mock(content=b"mp3-bytes")
+    # TTS bodies are now streamed, so the stub has to answer `iter_content`.
+    response = Mock(content=b"mp3-bytes", iter_content=lambda chunk_size: [b"mp3-bytes"])
     with patch.object(openai_voice, "conf", lambda: {"open_ai_api_key": "k"}), \
             patch.object(openai_voice.requests, "post", return_value=response):
         reply = openai_voice.OpenaiVoice().textToVoice("你好")
