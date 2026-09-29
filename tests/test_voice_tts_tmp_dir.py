@@ -81,7 +81,9 @@ def test_minimax_tts_lands_in_the_managed_tmp_dir():
 
 
 def test_zhipuai_tts_lands_in_the_managed_tmp_dir():
-    response = Mock(status_code=200, headers={"Content-Type": "audio/wav"}, content=b"RIFFwav")
+    # TTS bodies are now streamed, so the stub has to answer `iter_content`.
+    response = Mock(status_code=200, headers={"Content-Type": "audio/wav"},
+                    content=b"RIFFwav", iter_content=lambda chunk_size: [b"RIFFwav"])
     with patch.object(zhipuai_voice, "conf", lambda: {"zhipu_ai_api_key": "k"}), \
             patch.object(zhipuai_voice.requests, "post", return_value=response):
         reply = zhipuai_voice.ZhipuAIVoice().textToVoice("你好")

@@ -101,7 +101,7 @@ class ZhipuAIVoice(Voice):
                 "Content-Type": "application/json",
             }
             response = requests.post(
-                url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT
+                url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT, stream=True
             )
 
             if response.status_code != 200:
@@ -109,6 +109,7 @@ class ZhipuAIVoice(Voice):
                     f"[ZhipuAIVoice] textToVoice failed: status={response.status_code} "
                     f"body={response.text[:500]} model={model} voice={voice_id}"
                 )
+                response.close()
                 return Reply(ReplyType.ERROR, "语音合成失败，请稍后再试")
 
             # Some errors come back as JSON / SSE with HTTP 200.
@@ -122,9 +123,32 @@ class ZhipuAIVoice(Voice):
                     f"[ZhipuAIVoice] textToVoice unexpected text response "
                     f"(content_type={ct}): {err}"
                 )
+                response.close()
                 return Reply(ReplyType.ERROR, "语音合成失败，请稍后再试")
 
-            audio_bytes = response.content
+            # `zhipu_ai_api_base` is operator config, so the body is streamed
+            # and counted: an endpoint that answers with an endless stream used
+            # to be buffered whole (and then written out) before anything could
+            # object. The container has to be sniffed from the leading bytes,
+            # so the audio is held in memory -- bounded by the same budget the
+            # ASR path above already applies to a single audio file.
+            audio_chunks = []
+            size = 0
+            try:
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    if size > MAX_FILE_BYTES:
+                        logger.error(
+                            f"[ZhipuAIVoice] textToVoice audio too large: "
+                            f"over {MAX_FILE_BYTES} bytes, model={model}"
+                        )
+                        return Reply(ReplyType.ERROR, "语音合成失败，请稍后再试")
+                    audio_chunks.append(chunk)
+            finally:
+                response.close()
+            audio_bytes = b"".join(audio_chunks)
             ext = self._sniff_audio_ext(audio_bytes) or "wav"
 
             file_name = (
