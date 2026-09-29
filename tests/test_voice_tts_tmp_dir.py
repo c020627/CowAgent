@@ -37,7 +37,9 @@ def _assert_managed(reply):
 
 
 def test_linkai_tts_lands_in_the_managed_tmp_dir():
-    response = Mock(status_code=200, content=b"mp3-bytes")
+    # TTS bodies are now streamed, so the stub has to answer `iter_content`.
+    response = Mock(status_code=200, content=b"mp3-bytes",
+                    iter_content=lambda chunk_size: [b"mp3-bytes"])
     with patch.object(linkai_voice, "conf", lambda: {"linkai_api_key": "k"}), \
             patch.object(linkai_voice, "apply_client_source", lambda h: h), \
             patch.object(linkai_voice, "apply_cloud_user", lambda h: h), \

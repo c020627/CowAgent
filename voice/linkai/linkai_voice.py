@@ -8,6 +8,7 @@ import requests
 
 from bridge.reply import Reply, ReplyType
 from common.log import logger
+from common.media_download import MAX_FILE_BYTES
 from common.tmp_dir import TmpDir
 from common.utils import apply_client_source, apply_cloud_user
 from config import conf
@@ -80,7 +81,7 @@ class LinkAIVoice(Voice):
             model = conf().get("text_to_voice_model")
             if model:
                 data["model"] = model
-            res = requests.post(url, headers=headers, json=data, timeout=(5, 120))
+            res = requests.post(url, headers=headers, json=data, timeout=(5, 120), stream=True)
             if res.status_code != 200:
                 msg = ""
                 try:
@@ -88,10 +89,33 @@ class LinkAIVoice(Voice):
                 except Exception:
                     pass
                 logger.error(f"[LinkVoice] textToVoice error, status_code={res.status_code}, msg={msg}")
+                res.close()
                 return Reply(ReplyType.ERROR, "抱歉，语音合成失败")
             tmp_file_name = TmpDir().path() + datetime.datetime.now().strftime('%Y%m%d%H%M%S') + str(random.randint(0, 1000)) + ".mp3"
-            with open(tmp_file_name, 'wb') as f:
-                f.write(res.content)
+            # `linkai_api_base` is operator config, so the body is streamed and
+            # counted: an endpoint that answers with an endless or
+            # multi-gigabyte stream used to be buffered whole and written into
+            # the tmp dir before anything could object.
+            size = 0
+            try:
+                with open(tmp_file_name, 'wb') as f:
+                    for chunk in res.iter_content(chunk_size=64 * 1024):
+                        if not chunk:
+                            continue
+                        size += len(chunk)
+                        if size > MAX_FILE_BYTES:
+                            f.close()
+                            try:
+                                os.remove(tmp_file_name)
+                            except OSError:
+                                pass
+                            logger.error(
+                                f"[LinkVoice] textToVoice audio too large: over {MAX_FILE_BYTES} bytes"
+                            )
+                            return Reply(ReplyType.ERROR, "抱歉，语音合成失败")
+                        f.write(chunk)
+            finally:
+                res.close()
             logger.info(f"[LinkVoice] textToVoice success, input={text}, voice_id={data.get('voice')}")
             return Reply(ReplyType.VOICE, tmp_file_name)
         except Exception as e:
