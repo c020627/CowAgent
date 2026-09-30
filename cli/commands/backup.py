@@ -52,7 +52,8 @@ def _read_config(data_root: Path) -> dict:
     if not path.is_file():
         return {}
     try:
-        with path.open("r", encoding="utf-8") as handle:
+        # utf-8-sig tolerates a UTF-8 BOM (e.g. edited with Windows Notepad).
+        with path.open("r", encoding="utf-8-sig") as handle:
             value = json.load(handle)
         return value if isinstance(value, dict) else {}
     except (OSError, ValueError):
@@ -434,7 +435,8 @@ def restore_backup_archive(
         archived_config_path = temp_dir / "data" / "config.json"
         archived_config = {}
         if archived_config_path.is_file():
-            with archived_config_path.open("r", encoding="utf-8") as handle:
+            # utf-8-sig tolerates a UTF-8 BOM (e.g. edited with Windows Notepad).
+            with archived_config_path.open("r", encoding="utf-8-sig") as handle:
                 value = json.load(handle)
             if not isinstance(value, dict):
                 raise ValueError("archived config.json must contain an object")
