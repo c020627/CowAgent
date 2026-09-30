@@ -58,7 +58,10 @@ class Banwords(Plugin):
             banwords_path = os.path.join(curdir, "banwords.txt")
             words = []
             if os.path.exists(banwords_path):
-                with open(banwords_path, "r", encoding="utf-8") as f:
+                # utf-8-sig tolerates a UTF-8 BOM (e.g. banwords.txt edited
+                # with Windows Notepad / PowerShell). Plain utf-8 would glue
+                # the BOM to the first word so it can never match a message.
+                with open(banwords_path, "r", encoding="utf-8-sig") as f:
                     for line in f:
                         word = line.strip()
                         if word:
