@@ -262,4 +262,14 @@ class Query:
             return "success"
         except Exception as exc:
             logger.exception(exc)
-            return exc
+            # A handler's return value is the HTTP body, and this platform reads
+            # the literal body "success" as "message consumed". Returning the
+            # exception hands web.py something to str() into the response, so a
+            # failed request goes out as a 200 whose body is the error text: no
+            # reply is delivered and the platform retries the message. The error
+            # text is also the last thing that should leave the process -- it can
+            # name a missing setting or carry request material, which is why the
+            # other channels log only the exception type (see wechatcomapp_channel).
+            # Say "success", which is what every non-reply path here already
+            # returns; the failure is on the record and the user does not pay for it.
+            return "success"
