@@ -713,7 +713,11 @@ class ChatService:
         Copies are returned; the in-memory context keeps what the model saw.
         """
         restored = list(messages)
-        for i, msg in enumerate(restored):
+        # Walk from the newest user message backwards: the current turn's input
+        # is the one that must keep its verbatim address, and an older message
+        # may coincidentally contain ``model_query`` as a substring.
+        for i in range(len(restored) - 1, -1, -1):
+            msg = restored[i]
             if msg.get("role") != "user":
                 continue
             content = msg.get("content")
