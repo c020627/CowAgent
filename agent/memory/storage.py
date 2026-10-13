@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
+import struct
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -1215,7 +1217,28 @@ class MemoryStorage:
         return json.loads(raw)
 
     def _row_to_chunk(self, row) -> MemoryChunk:
-        """Convert database row to MemoryChunk"""
+        """Convert database row to MemoryChunk.
+
+        A malformed or non-finite embedding (e.g. a corrupted BLOB left behind
+        by an interrupted write, or a vector that failed to normalize) must not
+        take down the non-retrieval paths -- list, export, FTS5 rebuild,
+        get-by-id -- the way a single bad row used to crater
+        ``vector_backend.search`` before cd73478e isolated it there. We isolate
+        it the same way: drop the vector and keep the rest of the chunk usable.
+        """
+        raw_embedding = row['embedding']
+        try:
+            embedding = self._decode_embedding(raw_embedding)
+            if embedding is not None and not all(math.isfinite(v) for v in embedding):
+                raise ValueError("embedding contains non-finite values")
+        except (ValueError, TypeError, OverflowError, struct.error) as exc:
+            from common.log import logger
+
+            logger.warning(
+                "[MemoryStorage] Skipping malformed embedding for chunk %s: %s",
+                row['id'], exc,
+            )
+            embedding = None
         return MemoryChunk(
             id=row['id'],
             user_id=row['user_id'],
@@ -1225,7 +1248,7 @@ class MemoryStorage:
             start_line=row['start_line'],
             end_line=row['end_line'],
             text=row['text'],
-            embedding=self._decode_embedding(row['embedding']),
+            embedding=embedding,
             hash=row['hash'],
             metadata=json.loads(row['metadata']) if row['metadata'] else None
         )
