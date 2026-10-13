@@ -47,13 +47,34 @@ def _read(rel_path: str) -> str:
     if not full_path.startswith(_WEB_DIR + os.sep):
         raise ValueError(f"include escapes the web directory: {rel_path}")
 
-    mtime = os.path.getmtime(full_path)
+    # Consult the cache before stat'ing so a previously-good copy can still be
+    # served when the file is transiently unavailable (e.g. mid-deploy), and a
+    # steady-state hit avoids an unnecessary stat() on the render path.
     cached = _cache.get(full_path)
-    if cached and cached[0] == mtime:
+    try:
+        mtime = os.path.getmtime(full_path)
+    except OSError as exc:
+        # File gone mid-deploy: reuse the last good copy rather than 500-ing
+        # the whole console. A fragment that was never cached still surfaces.
+        if cached is not None:
+            return cached[1]
+        raise FileNotFoundError(
+            f"include fragment not found: {rel_path}"
+        ) from exc
+
+    if cached is not None and cached[0] == mtime:
         return cached[1]
 
-    with open(full_path, 'r', encoding='utf-8') as f:
-        text = f.read()
+    try:
+        with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
+            text = f.read()
+    except OSError as exc:
+        if cached is not None:
+            return cached[1]
+        raise FileNotFoundError(
+            f"include fragment could not be read: {rel_path}"
+        ) from exc
+
     _cache[full_path] = (mtime, text)
     return text
 
